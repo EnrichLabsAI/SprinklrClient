@@ -1,4 +1,7 @@
 # SprinklrClient
+
+Whoa there! I've updated this library, but not in this repo. Please check out https://github.com/DzRepo/SprinklrClientSamples for the most current version of this library. It will be updated here soon, but some additonal work is needed first. The version in the ClientSamples repo has several fixes for asset management in place.
+
 A simple Python client library (SDK) for interacting with Sprinklr's REST API
 
 **Notes:**
