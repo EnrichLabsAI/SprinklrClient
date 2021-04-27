@@ -3,41 +3,40 @@ import json
 import urllib as urllib
 import logging
 
+
 HTTP_OK = 200
 HTTP_NO_RESPONSE = 204
 
+
 class SprinklrClient:
-    """Sprinklr Client Library"""
+    """Sprinklr Client Library - Created by Steven Dzilvelis - Twitter: @stevedz 
+       **** NOT MANAGED OR SUPPORTED BY SPRINKLR ***
+       Version 0.21.4
+    """
 
     def __init__(self, key, path=None, access_token=None):
         """SprinklrClient
 
         Args:
-            key (string): The API Key for the application, obtained at https://developer.sprinklr.com 
+            key (string): The API Key for the application, obtained at https://developer.sprinklr.com
             path (string, optional): [description]. Defaults to None - Only necessary for environments other than Production.
             access_token (string, optional): Unique access token representing a user. Defaults to None, but needed most calls
 
             Most calls return a boolean indicating success or failure. It should not be necessary to wrap API calls in a try block.
-            
+
             On success, the object will be returned in the .result property.
-            If the return value is a JSON object(most common), it will be converted automatically to a Python dictionary object. the .raw property will 
+            If the return value is a JSON object(most common), it will be converted automatically to a Python dictionary object. the .raw property will
             contain the text version of the response.
 
             On failure (return is false), status_message will contain the error text.
 
         """
-        self.last_status_code = HTTP_OK
-        self.encoding = None
+        self.key = key
         self.access_token = access_token
         self.refresh_token = None
-        self.token_type = None
         self.expires_in = None
-        self.status_code = None
-        self.status_message = None
-        self.result = None
-        self.key = key
-        self.raw = None
-        self.search_cursor = None
+        self.encoding = None
+        self.token_type = None
         # current valid path options are (None), prod0, prod2, or sandbox
         self.path = ""
         if path is not None:
@@ -46,76 +45,119 @@ class SprinklrClient:
             else:
                 self.path = path + "/"
 
+        # HTTP Results
+        self.status_code = None
+        self.status_message = None
+
+        # Return value of calls - result is JSON object if returned that way, raw is not transformed.
+        self.result = None
+        self.raw = None
+
+        # For use with calls that return a cursor
+        self.search_cursor = None
+
 # HTTP Methods
 
-    def _make_api_request(self, verb, request_url, data = None, returns_json = True, is_file = False):
-        
+    def _make_api_request(self, verb, request_url, data=None, returns_json=True, is_file=False):
+
+        logging.info(verb + " - URL:" + request_url)
         headers = {'key': self.key,
                    'Authorization': "Bearer " + self.access_token}
 
-        if verb.upper() in {"POST", "DELETE"}:
-            headers['Content-Type'] = 'application/json'
-            headers['cache-control'] = 'no-cache'
+        http_verb = verb.upper()
+        string_data = None
+        files = None
+        response = None
+        self.status_message = None
+        ex = Exception("Blank")
 
-        if returns_json:
-            headers['accept'] = 'application/json'
+        if not is_file:
+            if http_verb in {"POST", "DELETE", "PUT"}:
+                if data is not None:
+                    headers['Content-Type'] = 'application/json'
+                headers['cache-control'] = 'no-cache'
 
-        if is_file:
-            headers["Content-Type"] = 'multipart/form-data'
+            if returns_json and verb != "PUT":
+                headers['accept'] = 'application/json'
 
-        logging.info(verb + " - URL:" + request_url)
+            if data is not None:
+                try:
+                    if type(data) is str:
+                        string_data = data
+                    else:
+                        string_data = json.dumps(data)
+                    logging.debug("data:" + string_data)
+                except Exception as ex:
+                    logging.error("Error converting JSON:", ex)
+                    return False  # error out
+
         logging.debug("Headers:" + str(headers))
 
-        response = None
+        # Detect if data is a JSON object and convert to string if necessary
 
         try:
-            if verb.upper() == "GET":
+            if http_verb == "GET":
                 response = requests.get(url=request_url, headers=headers)
-            elif verb.upper() == "DELETE":
-                response = requests.delete(url=request_url, headers=headers, data=json.dumps(data))
-            elif verb.upper() == "POST":
-                # Detect if data is a JSON object and convert to string if necessary
-                if type(data) is str:
-                    response = requests.post(url=request_url, headers=headers, data=data)
+            elif http_verb == "DELETE":
+                response = requests.delete(url=request_url, headers=headers, data=string_data)
+            elif http_verb == "POST":
+                if is_file:
+                    response = requests.post(url=request_url, headers=headers, files={'file': open(data, 'rb')})
                 else:
-                    response = requests.post(url=request_url, headers=headers, data=json.dumps(data))
-            elif verb.upper() == "PUT":
-                # Detect if data is a JSON object and convert to string if necessary
-                if type(data) is str:
-                    response = requests.put(url=request_url, headers=headers, data=data)
-                else:
-                    response = requests.put(url=request_url, headers=headers, data=json.dumps(data))
+                    response = requests.post(url=request_url, headers=headers, data=string_data)
+            elif http_verb == "PUT":
+                response = requests.put(url=request_url, headers=headers, data=string_data)
             else:
-                raise ValueError("Verb must be one of Get, Delete, Post or Put")
-
-            logging.debug(verb + " - Response code:" + str(response.status_code))
-        except ConnectionError:
+                raise ValueError("Verb must be one of GET, DELETE, POST or PUT")
+            
+            if response is not None:
+                logging.debug(verb + " - Response code:" + str(response.status_code))
+        except ConnectionError as ex:
             logging.error(verb + " - Connection Error:" + request_url)
             self.status_message = "Connection Error"
             self.status_code = -1
-            logging.exception(self.status_message, request_url)
-        except TimeoutError:
+            # logging.exception(self.status_message, request_url)
+        except TimeoutError as ex:
             logging.error(verb + " - Timeout Error:" + request_url)
             self.status_message = "Timeout Error"
             self.status_code = -1
             logging.exception(self.status_message, request_url)
-        except requests.exceptions.RequestException:
+        except requests.exceptions.RequestException as ex:
             logging.error(verb + " - Request Error:" + request_url)
             self.status_message = "Request Error"
             self.status_code = -1
             logging.exception(self.status_message, request_url)
+        except Exception as ex:    # faildown to a generic error
+            logging.error(verb + ": General Error in " + request_url)
+            self.status_message  = "General Error"
+            if response is not None:  # Did it make a request? 
+                if response.reason is not None:   # did it provide a reason? 
+                    self.status_message = response.reason  
+                elif response.content is not None:   # if not a reason, some content?
+                    self.status_message = str(response.content)
+            elif ex is not None:  # Is there info in the exception?
+                self.status_message = str(ex)
+            logging.exception("General Error:" + self.status_message)
+            return False
 
         if response is not None:
             self.status_code = response.status_code
-            self.raw = response.text
-            if response.text.startswith("{"):
-                self.result = json.loads(response.text)
-            else:
-                self.result = response.text
-
+            if response.text is not None:
+                self.raw = response.text
+                # detect JSON and convert to result object instead of raw text
+                if response.text.startswith("{") or response.text.startswith("["):
+                    self.result = json.loads(response.text)
+                else:
+                    self.result = response.text
+        
         if self.status_code not in {HTTP_OK, HTTP_NO_RESPONSE}:
-            logging.error(verb + ' - Error response:' + response.text)
-            self.status_message = response.text
+            if response is not None and response.text is not None:
+                logging.error(verb + ' - Error response:' + response.text)
+                self.status_message = response.text
+            else:
+                if ex is not None:
+                    logging.error(verb + ' - Error response:' + str(ex))
+
             return False
         else:
             self.status_message = None
@@ -133,7 +175,6 @@ class SprinklrClient:
         boolean: True if call successful, False if not. On error/failure, status_message should contain information.
         """
         return self._make_api_request("DELETE", request_url, data)
-        
 
     def get_request(self, request_url: str, returns_json=True):
         """ Supports all GET calls for API Endpoints.
@@ -146,7 +187,6 @@ class SprinklrClient:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
         """
         return self._make_api_request("GET", request_url)
-
 
     def post_request(self, request_url: str, data: object, is_file=False):
         """
@@ -161,8 +201,8 @@ class SprinklrClient:
         boolean: True if call successful, False if not. On error/failure, status_message should contain information.
         """
 
-        return self._make_api_request("POST", request_url, data = data, is_file=is_file)
-        
+        return self._make_api_request("POST", request_url, data=data, is_file=is_file)
+
     def put_request(self, request_url: str, data=None):
         """
         Supports all put calls for API Endpoints.
@@ -174,10 +214,25 @@ class SprinklrClient:
         Returns:
         boolean: True if call successful, False if not. On error/failure, status_message should contain information.
         """
-        return self._make_api_request("PUT", request_url, data )
+        return self._make_api_request("PUT", request_url, data)
 
 
 # Account 2.0
+
+
+    def fetch_account_by_id(self, account_id):
+        """
+        Fetch the details of an account using an account id.
+
+        Args:
+        account_id: Unique id of the account on channel.
+
+        Returns:
+        boolean: True if call successful, False if not. On error/failure, status_message should contain information.
+        """
+        request_url = f'https://api2.sprinklr.com/{self.path}api/v2/account/{account_id}'
+        return self.get_request(request_url, returns_json=True)
+
     def fetch_account_by_channel_id(self, account_type, channel_id):
         """
         Fetch the details of an account using an account type and channel id.
@@ -231,7 +286,7 @@ class SprinklrClient:
         Generates a URL that can be used to start the authorization process.
 
         Args:
-        redirect_uri (string): *must be the same redirect_uri stored in the application definition on https://developer.sprinklr.com *. 
+        redirect_uri (string): *must be the same redirect_uri stored in the application definition on https://developer.sprinklr.com *.
         This is the URL where the temporary code will be sent as a URL parameter.
 
         Returns:
@@ -247,8 +302,8 @@ class SprinklrClient:
 
         Args:
         secret (string): API key created at developer.sprinklr.com
-        redirect_uri (string): *must be the same redirect_uri stored in the application definition on https://developer.sprinklr.com *. 
-        code: The temporary code created via the user authentication process, sent to the redirect_uri 
+        redirect_uri (string): *must be the same redirect_uri stored in the application definition on https://developer.sprinklr.com *.
+        code: The temporary code created via the user authentication process, sent to the redirect_uri
 
         Note: This assumes the API Key has been set in the SprinklrClient object
         Returns:JSON dictionary of Access Token, Refresh Token and expire time (in seconds)
@@ -264,8 +319,8 @@ class SprinklrClient:
 
         headers = {'Content-Type': 'application/x-www-form-urlencoded'}
 
-        response = None      
-        verb = "POST (Authorize)"          
+        response = None
+        verb = "POST (Authorize)"
         try:
             response = requests.post(url=request_url, headers=headers)
         except ConnectionError:
@@ -353,7 +408,7 @@ class SprinklrClient:
 
     def delete_asset(self, asset_id):
         """
-        Deletes an asset specified by the id. 
+        Deletes an asset specified by the id.
 
         Args:
             asset_data: JSON Object representing asset
@@ -366,20 +421,21 @@ class SprinklrClient:
 
     def import_asset(self, import_type, url, upload_tracker_id):
         """
-        Imports an asset to the content store from an external link. The following content types are supported: IMAGE, VIDEO and LINK. 
-        But uploading content to the content store does not mean that it is available in the Sprinklr Social Asset Manager. 
+        Imports an asset to the content store from an external link. The following content types are supported: IMAGE, VIDEO and LINK.
+        But uploading content to the content store does not mean that it is available in the Sprinklr Social Asset Manager.
         After uploading content to the content store, use the Asset Create endpoint to create an asset in the Social Asset Manager.
 
         Args:
-            import_type (string): Avalaible content types: IMAGE, VIDEO, LINK - If IMAGE or VIDEO is used, the content from the URL is imported. If LINK is used, a preview of the link is imported. 
-            url ([type]): 	The URL of the asset you want to import. 
+            import_type (string): Avalaible content types: IMAGE, VIDEO, LINK - If IMAGE or VIDEO is used, the content from the URL is imported. If LINK is used, a preview of the link is imported.
+            url ([type]): 	The URL of the asset you want to import.
             upload_tracker_id ([type]): A unique identifier from the client.  This id is any string that you make up.
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
-        request_url = f'https://api2.sprinklr.com/{self.path}api/v1/sam/importUrl?importType={import_type}&url={url}&uploadTrackerId={upload_tracker_id}'
+        request_url = f'https://api2.sprinklr.com/{self.path}api/v1/sam/importUrl?importType={import_type}&url={urllib.parse.quote(url)}&uploadTrackerId={upload_tracker_id}'
+        
         return self.post_request(request_url, None)
 
     def read_asset(self, asset_id):
@@ -391,7 +447,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/sam/{asset_id}'
         return self.get_request(request_url, returns_json=True)
@@ -401,35 +457,35 @@ class SprinklrClient:
         Searches the content within the Assets.
 
         Args:
-            search_request: (JSON object) - object formatted with search parameters 
+            search_request: (JSON object) - object formatted with search parameters
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/sam/search'
-        return requests.post(request_url, search_request)
+        return self.post_request(request_url, search_request)
 
     def update_asset(self, asset_id, update_request):
         """
-        Updates an asset within the SAM Assets. 
-        The API only supports updating Digital Assets, Link Assets, and Text Assets. 
+        Updates an asset within the SAM Assets.
+        The API only supports updating Digital Assets, Link Assets, and Text Assets.
         It does not support updating Post Assets at this time.
 
         Args:
-            update_request (JSON object): object formatted with the update parameters 
+            update_request (JSON object): object formatted with the update parameters
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/sam/{asset_id}'
         return self.put_request(request_url, update_request)
 
     def asset_upload(self, content_type, upload_tracker_id, file_name):
         """
-        Uploads content in the content store. 
-        But uploading content to the content store does not mean it is available in the Sprinklr Social Asset Manager. 
+        Uploads content in the content store.
+        But uploading content to the content store does not mean it is available in the Sprinklr Social Asset Manager.
         After uploading content to the content store, use the Asset Create endpoint to create an asset in the Social Asset Manager.
 
         Args:
@@ -439,16 +495,14 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/sam/upload?contentType={content_type}&uploadTrackerId={upload_tracker_id}'
-        try:
-            filedata = {'file': open(file_name)}
-        except (Exception):
-            self.status_message = {"Error - file not found"}
-            return False
-        else:
-            return self.post_request(request_url, filedata, is_file=True)
+        return self.post_request(request_url, data=file_name, is_file=True)
+
+    def fetch_asset_import_status(self, task_id):
+        request_url = f'https://api2.sprinklr.com/{self.path}/api/v1/sam/task/status/{task_id}'
+        return self.get_request(request_url)
 
 # Assets 2.0
 
@@ -457,11 +511,11 @@ class SprinklrClient:
         Creates an Asset group.
 
         Args:
-            asset_group (JSON object): object formatted with the asset group parameters 
+            asset_group (JSON object): object formatted with the asset group parameters
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/asset-group'
         return self.post_request(request_url, asset_group)
@@ -475,7 +529,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/asset-group/{groupId}'
         return self.get_request(request_url, False)
@@ -490,7 +544,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/asset-group/{groupId}'
         return self.put_request(request_url, asset_update)
@@ -504,7 +558,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/asset-group/{groupId}'
         return self.delete_request(request_url)
@@ -514,9 +568,9 @@ class SprinklrClient:
     def fetch_audit(self, request):
         """
         Fetches a collection of audit events for an object.
-        The Audit API gives a full history of what/who has changed the object over time. 
-        That's usually used for governance to trace down who has made what changes and when. 
-        Make an Audit API POST call request and in the Body, enter a raw request in JSON format, 
+        The Audit API gives a full history of what/who has changed the object over time.
+        That's usually used for governance to trace down who has made what changes and when.
+        Make an Audit API POST call request and in the Body, enter a raw request in JSON format,
         as the endpoint expects a JSON body which contains the details of the Asset Ids required to make an Audit API call.
 
         Args:
@@ -524,7 +578,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/audit/fetch'
         return self.post_request(request_url, request)
@@ -532,27 +586,27 @@ class SprinklrClient:
 # Bootstrap
     def fetch_partner_campaigns(self):
         """
-        Fetches a list of global campaigns in the partner environment 
+        Fetches a list of global campaigns in the partner environment
 
         Args:
             None
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('PARTNER_CAMPAIGNS')
 
     def fetch_webhook_types(self):
         """
-        Fetch all the available webhook subscription types. 
+        Fetch all the available webhook subscription types.
 
         Args:
             None
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f"https://api2.sprinklr.com/{self.path}api/v2/webhook-subscriptions/webhook-types"
         return self.get_request(request_url)
@@ -566,7 +620,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
 
         request_url = f"https://api2.sprinklr.com/{self.path}api/v1/bootstrap/resources?types={types}"
@@ -576,13 +630,13 @@ class SprinklrClient:
         """
         Fetches a collection of available macros.
         In the UI, macros can be used to execute multiple actions on a message, asset, or profile with a single click, creating workflow efficiencies.
-        
+
         Args:
             None
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('MACROS')
 
@@ -595,7 +649,7 @@ class SprinklrClient:
 
           Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
       """
         return self.fetch_resources('CLIENT_PROFILE_LISTS')
 
@@ -608,7 +662,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('PARTNER_PROFILE_LISTS')
 
@@ -621,7 +675,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('CLIENT_QUEUES')
 
@@ -634,7 +688,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('PARTNER_QUEUES')
 
@@ -647,7 +701,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('APPROVAL_PATHS')
 
@@ -660,7 +714,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('ACCESSIBLE_USERS')
 
@@ -673,7 +727,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('UM_PRIORITIES')
 
@@ -685,20 +739,20 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('UM_STATUSES')
 
     def fetch_partner_accounts(self):
         """
-        Fetches a list of all active accounts in the partner 
+        Fetches a list of all active accounts in the partner
 
         Args:
             None
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('PARTNER_ACCOUNTS')
 
@@ -713,7 +767,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}/api/v1/campaign'
         return self.post_request(request_url, campaign_data)
@@ -728,7 +782,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/campaign'
         return self.post_request(request_url, campaign_data)
@@ -742,7 +796,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/campaign/{campaign_id}'
         return self.get_request(request_url)
@@ -757,7 +811,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/campaign/{campaign_id}'
         return self.put_request(request_url, campaign_data)
@@ -771,7 +825,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/campaign/{campaign_id}'
         return self.delete_request(request_url)
@@ -785,7 +839,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/campaign'
         return self.post_request(request_url, campaign_data)
@@ -801,7 +855,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/campaign/{external_source}/{external_id}'
         return self.put_request(request_url, campaign_data)
@@ -816,7 +870,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/campaign/{external_source}/{external_id}'
         return self.get_request(request_url)
@@ -831,7 +885,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/campaign/{external_source}/{external_id}'
         return self.delete_request(request_url)
@@ -841,16 +895,16 @@ class SprinklrClient:
     def create_case_v1(self, case_data):
         """
         Creates a case.
-        A Sprinklr Case can be created.which allows you to track customer interactions as a bundled group of messages. 
-        Once a Case has been created, subsequent responses can be kept together, organized as a single Case, 
+        A Sprinklr Case can be created.which allows you to track customer interactions as a bundled group of messages.
+        Once a Case has been created, subsequent responses can be kept together, organized as a single Case,
         which can help streamline workflows, keep messages organized, and simplify reporting on customer interactions.
 
         Args:
-            case_data (JSON object): object definition for a case 
+            case_data (JSON object): object definition for a case
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/case'
         return self.post_request(request_url, case_data)
@@ -858,8 +912,8 @@ class SprinklrClient:
     def delete_case_v1(self, case_id):
         """
         Creates a case.
-        A Sprinklr Case can be created, which allows you to track customer interactions as a bundled group of messages. 
-        Once a Case has been created, subsequent responses can be kept together, organized as a single Case, which can help streamline workflows, 
+        A Sprinklr Case can be created, which allows you to track customer interactions as a bundled group of messages.
+        Once a Case has been created, subsequent responses can be kept together, organized as a single Case, which can help streamline workflows,
         keep messages organized, and simplify reporting on customer interactions.
 
         Args:
@@ -867,7 +921,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{{env}}/api/v1/case'
         return self.delete_request(request_url, )
@@ -881,7 +935,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/case/search'
         return self.post_request(request_url, search_parameters)
@@ -895,7 +949,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/case/update'
         return self.post_request(request_url, case_data)
@@ -911,7 +965,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/case'
         return self.post_request(request_url, case_data)
@@ -925,7 +979,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/case/case-numbers?case-number={case_number}'
         return self.get_request(request_url, returns_json=True)
@@ -939,7 +993,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/case/channel-case-ids?channelCaseIds={channel_case_id}'
         return self.get_request(request_url, returns_json=True)
@@ -953,28 +1007,28 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/case/channel-case-numbers?channelCaseNumbers={chanel_case_number}'
         return self.get_request(request_url, returns_json=True)
 
     def fetch_case_by_case_id(self, case_id):
         """
-        Fetches a case by case id. 
+        Fetches a case by case id.
 
         Args:
             case_id (string): Case Id of the case for which you want to fetch details.
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/case/{case_id}'
         return self.get_request(request_url, returns_json=True)
 
     def fetch_case_associated_messages(self, case_id):
         """
-        Fetches all the message ids associated with a case. 
+        Fetches all the message ids associated with a case.
         A cursor will also be returned to fetch all message ids associated with case after a certain time.
 
         Args:
@@ -982,7 +1036,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/case/associated-messages?id={case_id}'
         return self.get_request(request_url, returns_json=True)
@@ -996,7 +1050,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         delete_url = f'https://api2.sprinklr.com/{self.path}api/v2/case'
         data = {case_id}
@@ -1011,7 +1065,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/case'
         return self.put_request(request_url, case_data)
@@ -1027,7 +1081,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/generic/comment/search/{asset_class}/{asset_id}'
         data = {
@@ -1048,7 +1102,7 @@ class SprinklrClient:
 
          Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
        """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/comment/{entity_type}/{entity_id}'
         data = {"text": comment}
@@ -1065,12 +1119,13 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/comment/{entity_type}/{entity_id}/{comment_id}'
         return self.get_request(request_url)
 
 # Custom Fields
+
     def create_custom_field(self, field_definition):
         """
         Creates a custom field.
@@ -1080,7 +1135,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/customfield'
         return self.post_request(request_url, field_definition)
@@ -1094,7 +1149,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/customfield/search'
         return self.post_request(request_url, search_parameters)
@@ -1109,7 +1164,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/customfield/{field_id}'
         return self.put_request(request_url, field_definition)
@@ -1123,14 +1178,14 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            No response object is returned if successful       
+            No response object is returned if successful
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/customfield/{field_id}'
         return self.get_request(request_url)
 
     def update_custom_field_options(self, field_id, field_options):
         """
-        Adds, Deletes and Sets user defined values of a custom field. 
+        Adds, Deletes and Sets user defined values of a custom field.
         In this call request, body/payload can be changed to perform three different tasks using the same API endpoint.
 
         Args:
@@ -1153,7 +1208,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('PROFILE_CUSTOM_FIELDS')
 
@@ -1166,9 +1221,21 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('ACCOUNT_CUSTOM_FIELDS')
+
+    def fetch_case_custom_fields(self):
+        """
+        Fetches a list of custom properties associated with Case objects
+        Args:
+            None
+
+        Returns:
+            boolean: True if call successful, False if not. On error/failure, status_message should contain information.
+            If successful, SprinklrClient.result will contain a JSON object
+        """
+        return self.fetch_resources('UNIVERSAL_CASE_CUSTOM_FIELDS')
 
     def fetch_media_asset_custom_fields(self):
         """
@@ -1179,7 +1246,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('MEDIA_ASSET_CUSTOM_FIELDS')
 
@@ -1192,7 +1259,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('OUTBOUND_CUSTOM_FIELDS')
 
@@ -1202,18 +1269,18 @@ class SprinklrClient:
 
         Args:
             None
-            
+
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         return self.fetch_resources('INBOUND_CUSTOM_FIELDS')
 
 # Email
-    def send_email(self, account_id, from_email, subject, message):
+    def send_email(self, account_id, from_email, subject, message, files=None):
         """
-        Creates an inbound email message and ingests it into Sprinklr based on account Id. Used to bypass email account ingestion into care. 
-        
+        Creates an inbound email message and ingests it into Sprinklr based on account Id. Used to bypass email account ingestion into care.
+
         Args:
             account_id (string): Id of the email account the message will be sent through
             from_email (string): email address of sender
@@ -1222,7 +1289,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful no object is returned 
+            If successful no object is returned
         """
         clean_message = message.replace("'", "\'")
         request_url = f"https://api2.sprinklr.com/{self.path}api/v2/email/create?aId={account_id}"
@@ -1236,7 +1303,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/dashboards'
         return self.get_request(request_url)
@@ -1250,7 +1317,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/dashboard/{urllib.parse.quote(dashboard_name)}'
         return self.get_request(request_url)
@@ -1270,7 +1337,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
 
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/stream/{dashboard_id}' \
@@ -1284,6 +1351,13 @@ class SprinklrClient:
 
         return self.get_request(request_url)
 
+    def fetch_case_stream(self, stream_id, start=0, rows=10, sort='ASC'):
+        case_pagination = {"casePaginationInfo": {
+            "start": start, "rows": rows, "sortDirection": sort}}
+        request_url = f'https://api2.sprinklr.com/{self.path}api/v1/universalcase/stream/{stream_id}/feed'
+
+        return self.post_request(request_url, data=case_pagination)
+
 # Extensions
 
     def create_extension(self, extension):
@@ -1295,7 +1369,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/extension'
         return self.post_request(request_url, extension)
@@ -1309,7 +1383,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/extension/{id}'
         return self.get_request(request_url)
@@ -1324,7 +1398,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/extension/{id}'
         return self.put_request(request_url, extension)
@@ -1338,11 +1412,11 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/extension/{id}'
         return self.delete_request(request_url)
-    
+
 # Listening
 
     def fetch_listening_topics(self):
@@ -1354,7 +1428,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/listening/topics'
         return self.get_request(request_url)
@@ -1368,7 +1442,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/listening/query/stream'
         return self.post_request(request_url, stream)
@@ -1383,7 +1457,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/listening/query/widget'
         return self.post_request(request_url, search_request)
@@ -1399,7 +1473,7 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/conversations/new/message-details'
         return self.post_request(request_url, conversation_data)
@@ -1413,10 +1487,36 @@ class SprinklrClient:
 
         Returns:
             boolean: True if call successful, False if not. On error/failure, status_message should contain information.
-            If successful, SprinklrClient.result will contain a JSON object        
+            If successful, SprinklrClient.result will contain a JSON object
         """
         request_url = f'https://api2.sprinklr.com/{self.path}api/v1/message/{umid}'
         return self.get_request(request_url)
+
+    def message_action(self, universal_message_key, channel_type, account_id, action):
+        """
+        Performs an action on a posted message, on the social network.
+        
+        Args:
+            universal_message_key (JSON Object): Represents the message that has been posted to a social channel
+            channel_type (String): Name of the social network the message has been posted to
+            account_id (integer): Account identifier that represents how the message was originally sent
+            action (String): The action to take on the message. Examples: HIDE, UNHIDE, LIKE, UNLIKE, FAVORITE, UNFAVORITE and DELETE
+
+        Returns:
+            boolean: True if call successful, False if not. On error/failure, status_message should contain information.
+            If not successful, SprinklrClient.result may contain information on the error. No data is returned if successful.
+        """
+        action_request = \
+            {
+                "universalMessageKey": universal_message_key,
+                "channelType": channel_type,
+                "accountId": account_id,
+                "action": action
+            }
+
+        request_url = f'https://api2.sprinklr.com/{self.path}api/v1/message/action'
+        return self.post_request(request_url, action_request)
+    
 
 # Message 2.0
     def fetch_message_by_id(self, message_id):
@@ -1915,10 +2015,12 @@ class SprinklrClient:
         request_url = f'https://api2.sprinklr.com/{self.path}api/v2/search/{entity_type}'
 
         result = self.post_request(request_url, filter)
+        self.search_cursor = None
         if (result):
-            self.search_cursor = self.result["data"]["cursor"]
-        else:
-            self.search_cursor = None
+            if "data" in self.result:
+                if "cursor" in self.result["data"]:
+                    self.search_cursor = self.result["data"]["cursor"]
+           
         return result
 
     def search_next_page(self, entity_type):
