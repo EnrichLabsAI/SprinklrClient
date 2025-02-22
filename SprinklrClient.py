@@ -1,8 +1,8 @@
-import requests
 import json
-import urllib as urllib
 import logging
+import urllib as urllib
 
+import requests
 
 HTTP_OK = 200
 HTTP_NO_RESPONSE = 204
@@ -367,14 +367,14 @@ class SprinklrClient:
         Args:
         secret (string): Secondary Secret token created with Application Key - available on developer.sprinklr.com
         redirect_uri (string): must be the same redirect_uri for the application. Where the redirect will send the temporary code
-        refresh_token (string): The token created at the same time as the Access Token during fetch_access_token
+        refresh_token (string): (MUST BE URL ENCODED!) The token created at the same time as the Access Token during fetch_access_token
 
         Returns:JSON dictionary of Access Token, (new) Refresh Token and expire time (in seconds)
         """
         logging.info("Calling refresh_access_token")
 
         request_url = f'https://api3.sprinklr.com/{self.path}oauth/token?client_id={self.key}&client_secret={secret}&redirect_uri={redirect_uri}&grant_type=refresh_token&refresh_token={refresh_token}'
-        headers = {'Content-Type': 'Application/x-www-form-urlencoded'}
+        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
         response = requests.post(url=request_url, headers=headers)
 
         self.status_code = response.status_code
@@ -382,9 +382,11 @@ class SprinklrClient:
         if response.status_code == HTTP_OK:
             self.encoding = response.encoding
             j_result = json.loads(response.content)
-            self.access_token = j_result["access_token"]
-            self.token_type = j_result["token_type"]
-            self.refresh_token = j_result["refresh_token"]
+            self.access_token = j_result.get("access_token")
+            self.token_type = j_result.get("token_type")
+            self.refresh_token = j_result.get("refresh_token")
+            self.expires_in = j_result.get("expires_in")
+            self.result = j_result
         else:
             if response.content is not None:
                 self.result = response.content
