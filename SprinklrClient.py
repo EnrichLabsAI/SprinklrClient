@@ -69,7 +69,7 @@ class SprinklrClient:
         files = None
         response = None
         self.status_message = None
-        ex = Exception("Blank")
+        ex = None
 
         if not is_file:
             if http_verb in {"POST", "DELETE", "PUT"}:
@@ -87,7 +87,8 @@ class SprinklrClient:
                     else:
                         string_data = json.dumps(data)
                     logging.debug("data:" + string_data)
-                except Exception as ex:
+                except Exception as json_ex:
+                    ex = json_ex
                     logging.error("Error converting JSON:", ex)
                     return False  # error out
 
@@ -112,22 +113,26 @@ class SprinklrClient:
             
             if response is not None:
                 logging.debug(verb + " - Response code:" + str(response.status_code))
-        except ConnectionError as ex:
+        except ConnectionError as connection_ex:
+            ex = connection_ex
             logging.error(verb + " - Connection Error:" + request_url)
             self.status_message = "Connection Error"
             self.status_code = -1
             # logging.exception(self.status_message, request_url)
-        except TimeoutError as ex:
+        except TimeoutError as timeout_ex:
+            ex = timeout_ex
             logging.error(verb + " - Timeout Error:" + request_url)
             self.status_message = "Timeout Error"
             self.status_code = -1
             logging.exception(self.status_message, request_url)
-        except requests.exceptions.RequestException as ex:
+        except requests.exceptions.RequestException as request_ex:
+            ex = request_ex
             logging.error(verb + " - Request Error:" + request_url)
             self.status_message = "Request Error"
             self.status_code = -1
             logging.exception(self.status_message, request_url)
-        except Exception as ex:    # faildown to a generic error
+        except Exception as general_ex:    # faildown to a generic error
+            ex = general_ex
             logging.error(verb + ": General Error in " + request_url)
             self.status_message  = "General Error"
             if response is not None:  # Did it make a request? 
